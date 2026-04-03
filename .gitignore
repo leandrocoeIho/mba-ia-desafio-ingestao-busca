@@ -1,3 +1,36 @@
+# Credenciais
 .env
-/venv
-__pycache__
+.env.local
+
+# Arquivos internos de ferramentas AI (não fazem parte do entregável)
+.claude/
+.github/
+CLAUDE.md
+
+# Ambiente virtual Python
+venv/
+.venv/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+
+# Volume local do Docker
+postgres_data/
+
+# Logs
+*.log
+
+# Windows
+Thumbs.db
+desktop.ini
