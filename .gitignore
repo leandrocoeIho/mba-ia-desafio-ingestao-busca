@@ -2,10 +2,13 @@
 .env
 .env.local
 
-# Arquivos internos de ferramentas AI (não fazem parte do entregável)
+# Ferramentas de IA e contexto interno (não fazem parte do entregável)
 .claude/
+.codex/
 .github/
 CLAUDE.md
+AGENTS.md
+docs/
 
 # Ambiente virtual Python
 venv/
