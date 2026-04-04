@@ -223,3 +223,39 @@ def test_ingest_invalid_database_url_prefix_exits_with_error(monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         ingest_pdf()
     assert exc_info.value.code != 0
+
+
+def test_ingest_chunks_have_faturamento_max_metadata(mocker):
+    """Chunks com R$ devem ter faturamento_max no metadata."""
+    chunk = MagicMock()
+    chunk.page_content = "Alfa Energia S.A. R$ 722.875.391,46 1972\nAlfa IA Indústria R$ 548.789.613,65 2020"
+    chunk.metadata = {"source": "document.pdf", "page": 0}
+    m = _setup(mocker, chunks=[chunk])
+    ingest_pdf()
+    doc = m["pgvector_cls"].from_documents.call_args.args[0][0]
+    assert "faturamento_max" in doc.metadata
+    assert doc.metadata["faturamento_max"] == 722875391.46
+
+
+def test_ingest_chunks_have_faturamento_min_metadata(mocker):
+    """Chunks com R$ devem ter faturamento_min no metadata."""
+    chunk = MagicMock()
+    chunk.page_content = "Alfa Energia S.A. R$ 722.875.391,46 1972\nAlfa IA Indústria R$ 548.789.613,65 2020"
+    chunk.metadata = {"source": "document.pdf", "page": 0}
+    m = _setup(mocker, chunks=[chunk])
+    ingest_pdf()
+    doc = m["pgvector_cls"].from_documents.call_args.args[0][0]
+    assert "faturamento_min" in doc.metadata
+    assert doc.metadata["faturamento_min"] == 548789613.65
+
+
+def test_ingest_chunks_without_values_have_no_faturamento_metadata(mocker):
+    """Chunks sem R$ não devem receber metadata de faturamento."""
+    chunk = MagicMock()
+    chunk.page_content = "Nome da empresa Faturamento Ano de fundação"
+    chunk.metadata = {"source": "document.pdf", "page": 0}
+    m = _setup(mocker, chunks=[chunk])
+    ingest_pdf()
+    doc = m["pgvector_cls"].from_documents.call_args.args[0][0]
+    assert "faturamento_max" not in doc.metadata
+    assert "faturamento_min" not in doc.metadata

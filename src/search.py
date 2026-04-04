@@ -1,4 +1,5 @@
 import os
+import re
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -73,6 +74,86 @@ def _system_prompt() -> str:
     )
 
 
+_COMPARATIVE_PATTERNS = (
+    "maior faturamento",
+    "menor faturamento",
+    "maior receita",
+    "menor receita",
+    "mais fatura",
+    "menos fatura",
+    "maior valor",
+    "menor valor",
+    "top ",
+    "mais alto",
+    "mais baixo",
+    "highest",
+    "lowest",
+)
+
+
+def _extract_company_values(text: str) -> list[tuple[str, float]]:
+    """Extrai pares (nome_empresa, faturamento) de um texto de chunk."""
+    results = []
+    for line in text.split('\n'):
+        line = line.strip()
+        match = re.search(r'R\$\s*([\d\.]+,\d{2})', line)
+        if not match:
+            continue
+        value_str = match.group(1).replace('.', '').replace(',', '.')
+        try:
+            value = float(value_str)
+        except ValueError:
+            continue
+        name_part = line[:match.start()].strip()
+        if name_part:
+            results.append((name_part, value))
+    return results
+
+
+def _is_comparative_query(question: str) -> bool:
+    normalized = question.strip().lower()
+    return any(p in normalized for p in _COMPARATIVE_PATTERNS)
+
+
+def _answer_comparative(question: str, results: list) -> str | None:
+    """Tenta responder query comparativa com pós-processamento determinístico.
+
+    Extrai todos os pares (empresa, faturamento) dos chunks recuperados,
+    calcula max/min e retorna resposta formatada.
+    Retorna None se não encontrar dados suficientes.
+    """
+    all_entries = []
+    for doc, _ in results:
+        all_entries.extend(_extract_company_values(doc.page_content))
+
+    if not all_entries:
+        return None
+
+    q = question.strip().lower()
+
+    top_match = re.search(r'\btop\s+(\d+)\b', q)
+    if top_match:
+        n = int(top_match.group(1))
+        sorted_desc = sorted(all_entries, key=lambda x: x[1], reverse=True)[:n]
+        lines = [
+            f"{i+1}. {name}: R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+            for i, (name, value) in enumerate(sorted_desc)
+        ]
+        return "Com base nos dados disponíveis no contexto:\n" + "\n".join(lines)
+
+    if any(p in q for p in ("maior faturamento", "mais fatura", "maior receita", "mais alto", "maior valor", "highest")):
+        name, value = max(all_entries, key=lambda x: x[1])
+        value_fmt = f"{value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        return f"Com base nos dados disponíveis no contexto, a empresa com maior faturamento é {name} com R$ {value_fmt}."
+
+    if any(p in q for p in ("menor faturamento", "menos fatura", "menor receita", "mais baixo", "menor valor", "lowest")):
+        name, value = min(all_entries, key=lambda x: x[1])
+        value_fmt = f"{value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        return f"Com base nos dados disponíveis no contexto, a empresa com menor faturamento é {name} com R$ {value_fmt}."
+
+    return None
+
+
 def _should_block_question(question: str) -> bool:
     normalized = question.strip().lower()
     if not normalized:
@@ -110,6 +191,16 @@ def search_prompt():
             return NO_CONTEXT_MESSAGE
 
         all_results = vector_store.similarity_search_with_relevance_scores(question, k=10)
+
+        # Comparative queries use deterministic extraction — threshold is irrelevant.
+        if _is_comparative_query(question):
+            if not all_results:
+                return NO_CONTEXT_MESSAGE
+            comparative_answer = _answer_comparative(question, all_results)
+            if comparative_answer:
+                return comparative_answer
+            return NO_CONTEXT_MESSAGE
+
         results = [(doc, score) for doc, score in all_results if score >= similarity_threshold]
         if not results:
             return NO_CONTEXT_MESSAGE

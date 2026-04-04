@@ -427,3 +427,70 @@ def test_search_runtime_is_empty_returns_false_when_store_has_docs(mocker):
     chain = search.search_prompt()
 
     assert chain.is_empty() is False
+
+
+def test_search_extract_company_values_parses_correctly():
+    """_extract_company_values deve parsear linhas com R$ corretamente."""
+    text = "Alfa Energia S.A. R$ 722.875.391,46 1972\nAlfa IA R$ 548.789.613,65 2020"
+    entries = search._extract_company_values(text)
+    assert len(entries) == 2
+    names = [e[0] for e in entries]
+    values = [e[1] for e in entries]
+    assert any("Alfa Energia" in n for n in names)
+    assert 722875391.46 in values
+    assert 548789613.65 in values
+
+
+def test_search_is_comparative_query_detects_patterns():
+    """_is_comparative_query deve detectar padrões comparativos."""
+    assert search._is_comparative_query("Qual empresa tem maior faturamento?")
+    assert search._is_comparative_query("Qual a de menor faturamento?")
+    assert search._is_comparative_query("top 3 empresas")
+    assert not search._is_comparative_query("O que é LangChain?")
+    assert not search._is_comparative_query("Qual o faturamento da Alfa Energia S.A.?")
+
+
+def test_search_comparative_maior_returns_deterministic_answer(mocker):
+    """Perguntas de 'maior faturamento' devem usar pós-processamento determinístico."""
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (_make_document("Empresa A R$ 500.000,00 2001\nEmpresa B R$ 1.000.000,00 2002"), 0.8),
+            (_make_document("Empresa C R$ 200.000,00 1999"), 0.75),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Qual empresa tem maior faturamento?")
+    assert "Empresa B" in response
+    assert "1.000.000" in response
+    # LLM não deve ser chamado para queries comparativas com dados disponíveis
+    fixtures["llm"].invoke.assert_not_called()
+
+
+def test_search_comparative_menor_returns_deterministic_answer(mocker):
+    """Perguntas de 'menor faturamento' devem usar pós-processamento determinístico."""
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (_make_document("Empresa X R$ 100.000,00 2001\nEmpresa Y R$ 50.000,00 2002"), 0.8),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Qual é a empresa de menor faturamento?")
+    assert "Empresa Y" in response
+    assert "50.000" in response
+    fixtures["llm"].invoke.assert_not_called()
+
+
+def test_search_comparative_no_values_falls_through_to_default_message(mocker):
+    """Se contexto sem valores R$, query comparativa retorna NO_CONTEXT_MESSAGE."""
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (_make_document("Este chunk não tem valores monetários."), 0.8),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Qual empresa tem maior faturamento?")
+    assert response == NO_CONTEXT_MESSAGE
+    fixtures["llm"].invoke.assert_not_called()

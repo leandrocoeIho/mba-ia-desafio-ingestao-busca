@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,6 +30,28 @@ def _validate_database_url(database_url: str) -> None:
 
 def _pages_have_text(pages: list) -> bool:
     return any((page.page_content or "").strip() for page in pages)
+
+
+def _extract_faturamento_values(text: str) -> list[float]:
+    """Extrai todos os valores R$ de um chunk como floats."""
+    matches = re.findall(r'R\$\s*([\d\.]+,\d{2})', text)
+    values = []
+    for m in matches:
+        try:
+            values.append(float(m.replace('.', '').replace(',', '.')))
+        except ValueError:
+            continue
+    return values
+
+
+def _enrich_metadata(documents: list) -> None:
+    """Adiciona faturamento_max/min ao metadata de chunks que contêm valores R$."""
+    for doc in documents:
+        values = _extract_faturamento_values(doc.page_content)
+        if values:
+            doc.metadata["faturamento_max"] = max(values)
+            doc.metadata["faturamento_min"] = min(values)
+            doc.metadata["faturamento_count"] = len(values)
 
 
 def _ensure_source_metadata(documents: list, pdf_path: str) -> None:
@@ -68,6 +91,7 @@ def ingest_pdf():
             _exit_with_error("Nenhum chunk foi gerado a partir do PDF.")
 
         _ensure_source_metadata(chunks, pdf_path)
+        _enrich_metadata(chunks)
         print(f"Chunks gerados: {len(chunks)}")
 
         embeddings = OpenAIEmbeddings(model=embedding_model)
