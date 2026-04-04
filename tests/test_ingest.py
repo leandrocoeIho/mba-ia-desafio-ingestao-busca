@@ -259,3 +259,65 @@ def test_ingest_chunks_without_values_have_no_faturamento_metadata(mocker):
     doc = m["pgvector_cls"].from_documents.call_args.args[0][0]
     assert "faturamento_max" not in doc.metadata
     assert "faturamento_min" not in doc.metadata
+
+# --- Summary documents ---
+
+def test_ingest_creates_summary_documents_with_global_stats(mocker):
+    """Ingest deve gerar docs-resumo com max/min/top-10 globais."""
+    chunks = [
+        MagicMock(
+            page_content="Empresa A R$ 1.000.000,00 2001\nEmpresa B R$ 500.000,00 2002",
+            metadata={"source": "document.pdf", "page": 0},
+        ),
+        MagicMock(
+            page_content="Empresa C R$ 2.000.000,00 1999\nEmpresa D R$ 100.000,00 2010",
+            metadata={"source": "document.pdf", "page": 1},
+        ),
+    ]
+    m = _setup(mocker, chunks=chunks)
+    ingest_pdf()
+    all_docs = m["pgvector_cls"].from_documents.call_args.args[0]
+    summary_docs = [d for d in all_docs if getattr(d, "metadata", {}).get("type") == "summary"]
+    assert len(summary_docs) >= 1
+    combined_text = " ".join(d.page_content for d in summary_docs)
+    assert "Empresa C" in combined_text
+    assert "2.000.000" in combined_text
+    assert "Empresa D" in combined_text
+    assert "100.000" in combined_text
+
+
+def test_ingest_summary_contains_top_10(mocker):
+    """O doc-resumo de ranking deve conter top 10 por faturamento."""
+    lines = [f"Empresa{i} R$ {(i+1)*100}.000,00 2000" for i in range(15)]
+    chunk = MagicMock(
+        page_content="\n".join(lines),
+        metadata={"source": "document.pdf", "page": 0},
+    )
+    m = _setup(mocker, chunks=[chunk])
+    ingest_pdf()
+    all_docs = m["pgvector_cls"].from_documents.call_args.args[0]
+    summary_docs = [d for d in all_docs if getattr(d, "metadata", {}).get("type") == "summary"]
+    combined_text = " ".join(d.page_content for d in summary_docs)
+    assert "Empresa14" in combined_text
+
+
+def test_ingest_summary_not_created_when_no_values(mocker):
+    """Se nenhum chunk tem R$, não deve criar doc de resumo."""
+    chunk = MagicMock(
+        page_content="Texto simples sem valores monetarios",
+        metadata={"source": "document.pdf", "page": 0},
+    )
+    m = _setup(mocker, chunks=[chunk])
+    ingest_pdf()
+    all_docs = m["pgvector_cls"].from_documents.call_args.args[0]
+    summary_docs = [d for d in all_docs if getattr(d, "metadata", {}).get("type") == "summary"]
+    assert len(summary_docs) == 0
+
+
+def test_ingest_extract_company_data_handles_glued_text():
+    """Parser deve tratar nomes colados ao R$ (ex: ParticipaçõesR$)."""
+    from ingest import _extract_company_data
+    text = "Aurora E-commerce ParticipaçõesR$ 15.935.845,08 1953"
+    entries = _extract_company_data(text)
+    assert len(entries) >= 1
+    assert any(abs(v - 15935845.08) < 0.01 for _, v, _ in entries)

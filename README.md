@@ -93,9 +93,10 @@ Com o `document.pdf` atual do repositório, a ingestão processa `34` páginas e
 Saída esperada:
 
 ```text
-Páginas carregadas: 34
+Paginas carregadas: 34
 Chunks gerados: 67
-Ingestão concluída com sucesso.
+Documentos-resumo gerados: 3
+Ingestao concluida com sucesso.
 ```
 
 ### 3. Iniciar o chat
@@ -119,8 +120,8 @@ Os exemplos abaixo seguem o formato real da CLI e foram validados contra o `docu
 
 ```text
 Faça sua pergunta:
-PERGUNTA: Qual o faturamento da Alfa Energia S.A.?
-RESPOSTA: O faturamento da Alfa Energia S.A. é de R$ 722.875.391,46.
+PERGUNTA: Qual o faturamento da Empresa SuperTechIABrazil?
+RESPOSTA: A empresa SuperTechIABrazil tem um faturamento de 10 milhões de reais.
 ```
 
 ### Pergunta fora do contexto

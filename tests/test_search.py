@@ -441,13 +441,49 @@ def test_search_extract_company_values_parses_correctly():
     assert 548789613.65 in values
 
 
+def test_search_format_value_natural():
+    """_format_value_natural deve formatar valores em linguagem natural."""
+    assert search._format_value_natural(10_000_000) == "10 milhões de reais"
+    assert search._format_value_natural(1_000_000) == "1 milhão de reais"
+    assert search._format_value_natural(50_000) == "50 mil reais"
+    assert search._format_value_natural(1_000_000_000) == "1 bilhão de reais"
+    assert "bilhões de reais" in search._format_value_natural(4_984_749_742.20)
+    assert "milhões de reais" in search._format_value_natural(722_875_391.46)
+    assert "mil reais" in search._format_value_natural(105_139.46)
+    assert search._format_value_natural(500) == "500 reais"
+
+
 def test_search_is_comparative_query_detects_patterns():
-    """_is_comparative_query deve detectar padrões comparativos."""
+    """_is_comparative_query deve detectar padrões comparativos globais."""
     assert search._is_comparative_query("Qual empresa tem maior faturamento?")
     assert search._is_comparative_query("Qual a de menor faturamento?")
     assert search._is_comparative_query("top 3 empresas")
+    assert search._is_comparative_query("Qual empresa de Telecom tem o maior faturamento?")
     assert not search._is_comparative_query("O que é LangChain?")
     assert not search._is_comparative_query("Qual o faturamento da Alfa Energia S.A.?")
+
+
+def test_search_sector_filter_extracts_keyword():
+    """_extract_sector_filter detecta keyword de setor na query."""
+    assert search._extract_sector_filter("Qual empresa de Telecom tem o maior faturamento?") == "telecom"
+    assert search._extract_sector_filter("top 3 empresas de software") == "software"
+    assert search._extract_sector_filter("Qual empresa tem maior faturamento?") is None
+
+
+def test_search_sector_comparative_filters_by_sector(mocker):
+    """Comparative com setor deve filtrar entradas por nome do setor."""
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (_make_document("Alfa Telecom LTDA R$ 80.000.000,00 1987\nAlfa Energia S.A. R$ 722.000.000,00 1972"), 0.6),
+            (_make_document("Beta Telecom Holding R$ 2.895.000.000,00 1964\nBeta Energia Indústria R$ 2.398.000.000,00 1959"), 0.5),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Qual empresa de Telecom tem o maior faturamento?")
+    assert "Beta Telecom" in response
+    assert "bilh" in response and "de reais" in response
+    fixtures["llm"].invoke.assert_not_called()
 
 
 def test_search_comparative_maior_returns_deterministic_answer(mocker):
@@ -462,7 +498,7 @@ def test_search_comparative_maior_returns_deterministic_answer(mocker):
     chain = search.search_prompt()
     response = chain("Qual empresa tem maior faturamento?")
     assert "Empresa B" in response
-    assert "1.000.000" in response
+    assert "milh" in response and "de reais" in response
     # LLM não deve ser chamado para queries comparativas com dados disponíveis
     fixtures["llm"].invoke.assert_not_called()
 
@@ -478,7 +514,7 @@ def test_search_comparative_menor_returns_deterministic_answer(mocker):
     chain = search.search_prompt()
     response = chain("Qual é a empresa de menor faturamento?")
     assert "Empresa Y" in response
-    assert "50.000" in response
+    assert "50 mil reais" in response
     fixtures["llm"].invoke.assert_not_called()
 
 
@@ -493,4 +529,76 @@ def test_search_comparative_no_values_falls_through_to_default_message(mocker):
     chain = search.search_prompt()
     response = chain("Qual empresa tem maior faturamento?")
     assert response == NO_CONTEXT_MESSAGE
+    fixtures["llm"].invoke.assert_not_called()
+
+
+def test_search_comparative_prefers_summary_doc(mocker):
+    """Se um doc-resumo está nos resultados, comparativa usa dados do resumo."""
+    summary_doc = _make_document(
+        "Resumo estatístico do documento:\n"
+        "Total de empresas: 500\n"
+        "Empresa com maior faturamento: Vanguarda Siderurgia Participações com R$ 4.984.749.742,20 fundada em 1989\n"
+        "Empresa com menor faturamento: Pacto Varejo EPP com R$ 105.139,46 fundada em 1997"
+    )
+    summary_doc.metadata["type"] = "summary"
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (summary_doc, 0.9),
+            (_make_document("Empresa A R$ 500.000,00 2001"), 0.7),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Qual empresa tem maior faturamento?")
+    assert "Vanguarda Siderurgia" in response
+    assert "bilh" in response and "de reais" in response
+    fixtures["llm"].invoke.assert_not_called()
+
+
+def test_search_comparative_top_n_uses_ranking_summary(mocker):
+    """top N queries devem usar doc de ranking quando disponível."""
+    ranking_doc = _make_document(
+        "Ranking das 10 empresas com maior faturamento:\n"
+        "1. Empresa Alpha - R$ 5.000.000,00\n"
+        "2. Empresa Beta - R$ 4.000.000,00\n"
+        "3. Empresa Gamma - R$ 3.000.000,00"
+    )
+    ranking_doc.metadata["type"] = "summary"
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[
+            (ranking_doc, 0.85),
+            (_make_document("Empresa X R$ 100.000,00 2001"), 0.6),
+        ],
+    )
+    chain = search.search_prompt()
+    response = chain("Quais são as top 3 empresas por faturamento?")
+    assert "Empresa Alpha" in response
+    assert "Empresa Beta" in response
+    assert "Empresa Gamma" in response
+    fixtures["llm"].invoke.assert_not_called()
+
+
+def test_search_is_comparative_detects_count_queries():
+    """Queries de contagem devem ser detectadas como comparativas."""
+    assert search._is_comparative_query("Quantas empresas existem no documento?")
+    assert search._is_comparative_query("Quantas empresas foram fundadas em 2025?")
+
+
+def test_search_count_query_with_summary_returns_total(mocker):
+    """Queries de contagem devem usar o total do doc resumo."""
+    summary_doc = _make_document(
+        "Resumo estatístico do documento:\n"
+        "Total de empresas: 500\n"
+        "Empresa com maior faturamento: X com R$ 1.000,00\n"
+        "Empresa com menor faturamento: Y com R$ 100,00"
+    )
+    summary_doc.metadata["type"] = "summary"
+    fixtures = _setup_search(
+        mocker,
+        similarity_results=[(summary_doc, 0.9)],
+    )
+    chain = search.search_prompt()
+    response = chain("Quantas empresas existem no documento?")
+    assert "500" in response
     fixtures["llm"].invoke.assert_not_called()
