@@ -167,6 +167,16 @@ docker compose logs bootstrap_vector_ext
 
 Valide a `OPENAI_API_KEY` no `.env` e confirme acesso de rede à API da OpenAI.
 
+## Limitações conhecidas
+
+O PDF contém dados de 1001 empresas distribuídos em 67 chunks de 1000 caracteres. Com `k=10`, cada busca recupera no máximo 10 chunks — uma fração do total. Isso significa que:
+
+- Perguntas sobre empresas específicas podem falhar se o chunk correspondente não pontuar entre os 10 mais similares.
+- Respostas comparativas por setor (ex: "maior faturamento de Telecom") são corretas apenas dentro dos chunks recuperados, não do dataset completo.
+- Perguntas globais (maior/menor faturamento geral, contagem total) são precisas porque usam documentos-resumo pré-computados na ingestão.
+
+Essas limitações decorrem da configuração exigida pelo enunciado (`chunk_size=1000`, `chunk_overlap=150`, `k=10`) e da natureza da busca por similaridade semântica sobre dados tabulares.
+
 ## Observações de segurança
 
 - Não commite o arquivo `.env`.
